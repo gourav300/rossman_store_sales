@@ -1,0 +1,197 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+%matplotlib inline
+from itertools import product
+from collections import Counter
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import LabelEncoder
+le = LabelEncoder()
+import category_encoders as ce
+import warnings
+import seaborn as sns
+
+pd.set_option('display.max_rows', 400)
+pd.set_option('display.max_columns', 160)
+pd.set_option('display.max_colwidth', 40)
+warnings.filterwarnings("ignore")
+
+df_item_categories = pd.read_csv('item_categories.csv')
+df_items = pd.read_csv('items.csv')
+df_sales_train = pd.read_csv('sales_train.csv')
+df_sample_submission = pd.read_csv('sample_submission.csv')
+df_shops = pd.read_csv('shops.csv')
+df_test = pd.read_csv('test.csv')
+
+df_test.item_id.unique()
+
+df_item_categories.head()
+
+df_test.item_id.nunique()
+
+df_test.shop_id.nunique()
+
+df_test.describe()
+
+df_sales_train.item_id.nunique()
+
+df_sales_train.shop_id.nunique()
+
+train_item = df_sales_train.item_id.unique()
+
+train_shop = df_sales_train.shop_id.unique()
+
+test_item = df_test.item_id.unique()
+
+test_shop = df_test.shop_id.unique()
+
+it=set(test_item)
+itr = set(train_item)
+st = set(test_shop)
+
+item_diff = [x for x in train_item if x not in it]
+
+len(item_diff)
+
+shop_diff = set([x for x in train_shop if x not in st])
+
+len(shop_diff)
+
+df_sales_train.describe()
+
+preparing training df
+
+df_sales_train['date'] = pd.to_datetime(df_sales_train.date,format='%d.%m.%Y')
+df_sales_train['revenue'] = df_sales_train.item_price * df_sales_train.item_cnt_day
+df_sales_train['year'] = df_sales_train['date'].dt.year
+df_sales_train['month'] = df_sales_train['date'].dt.month
+df_sales_train['day'] = df_sales_train['date'].dt.day
+
+df_sales_train.info()
+
+sns.set_theme(style="whitegrid")
+# tips = sns.load_dataset("tips")
+ax = sns.boxplot(x=df_sales_train.item_cnt_day)
+
+bx = sns.boxplot(x=df_sales_train.item_price)
+
+dfa = df_sales_train[(df_sales_train.item_price < 100000) & (df_sales_train.item_price > 0)]
+dfa = dfa[dfa.item_cnt_day < 1001]
+
+df4 = dfa.groupby(['date_block_num','shop_id','item_id']).agg({'item_cnt_day':'sum','revenue':'sum'})
+
+df5 = df4.reset_index()
+
+dft = df_test.copy()
+dft['date_block_num'] = 34
+dft['year'] = 2015
+dft['month'] = 11
+# dft['year'] = dft['year'].astype('float64')
+# dft['month'] = dft['month'].astype('int8')
+# dft['date_block_num'] = dft['date_block_num'].astype('int8')
+# dft['shop_id'] = dft['shop_id'].astype('float64')
+# dft['item_id'] = dft['item_id'].astype('float64')
+df6 = pd.concat([df5,dft], ignore_index=True)
+
+df6.rename(columns={'item_cnt_day':'item_cnt_month'}, inplace = True)
+
+def lag(df,lag,col):
+    tmp = df[['date_block_num','shop_id','item_id',col]]
+    for i in lag:
+        shifted = tmp.copy()
+        shifted.columns = ['date_block_num','shop_id','item_id',col + '_lag_' + str(i)]
+        shifted['date_block_num'] +=i
+        df = pd.merge(df,shifted, on=['date_block_num','shop_id','item_id'], how = 'left')
+        df[col+'_lag_'+ str(i)] = df[col+'_lag_'+ str(i)].astype('float16')
+    return df
+
+df7= lag(df6,[1,2,3],'item_cnt_month')
+
+df7
+
+df7.fillna(0, inplace = True)
+
+df_testf = df7[df7.date_block_num == 34]
+df_trainf = df7[df7.date_block_num<34]
+
+df_trainf
+
+df_testf
+
+df_trainf.drop(['ID','year','month','revenue'],axis = 1, inplace = True)
+df_testf.drop(['ID','year','month','revenue'],axis = 1, inplace = True)
+
+df_trainf = df_trainf[df_trainf.date_block_num > 2]
+
+X_train = df_trainf[df_trainf.date_block_num < 33].drop(['item_cnt_month'], axis =1)
+y_train = df_trainf[(df_trainf.date_block_num < 33)]['item_cnt_month']
+
+X_valid = df_trainf[df_trainf.date_block_num == 33].drop(['item_cnt_month'], axis =1)
+y_valid = df_trainf[(df_trainf.date_block_num == 33)]['item_cnt_month']
+X_test = df_testf
+
+from sklearn.model_selection import GridSearchCV
+
+from sklearn.linear_model import Lasso
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import SVC
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.naive_bayes import GaussianNB
+from sklearn.naive_bayes import MultinomialNB
+
+model_params = {
+    'svm' : {
+        'model' : SVC(gamma ='auto'),
+        'params' : {
+            'C' : [1,10,20],
+            'kernel' : ['linear','rbf']
+        }
+    },
+    'Random_Forest' : {
+        'model' : RandomForestClassifier(),
+        'params' : {
+            'n_estimators' : [5,10,40]
+        }
+    },
+    
+    'Gaussian_NB' : {
+        'model' : GaussianNB(),
+        'params' : {}
+    },
+    'Multinomial_NB' : {
+        'model' : MultinomialNB(),
+        'params' : {}
+    },
+#     'linear_regression' : {
+#             'model': LinearRegression(),
+#             'params': {
+#                 'normalize': [True, False]
+#             }
+#         },
+        'lasso': {
+            'model': Lasso(),
+            'params': {
+                'alpha': [1,2],
+                'selection': ['random', 'cyclic']
+            }
+        },
+    'Decisicion_Trees' : {
+        'model' : DecisionTreeClassifier(),
+        'params' : {
+            'criterion' : ['gini','entropy']
+        }
+    }
+}
+
+score= []
+for model_name, mp in model_params.items():
+    clf = GridSearchCV(mp['model'],mp['params'], return_train_score=False)
+    clf.fit(X_train,y_train)
+    score.append({
+        'model' : model_name,
+        'best_score' : clf.best_score_,
+        'best_params' : clf.best_params_,
+    })
+final_bhp = pd.DataFrame(score, columns = ['model', 'best_score','best_params'])
+final_bhp
+
